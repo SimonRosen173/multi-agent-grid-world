@@ -12,13 +12,13 @@ MAPS_PATH = PATH_SEP.join(MAPS_PATH)
 def load(grid, grid_input_type):
     if grid_input_type == "map_name":
         return _load_from_txt(grid + ".txt")
-    elif grid_input_type == "file_name":
+    elif grid_input_type == "file_path":
         return _load_from_txt(grid, in_maps_folder=False)
 
 
 def _load_from_txt(file_name, in_maps_folder=True):
     if in_maps_folder:
-        file_name = MAPS_PATH + file_name
+        file_name = MAPS_PATH + PATH_SEP + file_name
     with open(file_name) as f:
         grid_arr = []
         for line in f:
