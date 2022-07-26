@@ -8,5 +8,6 @@ setup(
     license='MIT',
     author='Simon Rosen',
     author_email='simonrosen173@gmail.com',
-    description='Multi-agent grid world gym environment '
+    description='Multi-agent grid world gym environment ',
+    include_package_data=True
 )

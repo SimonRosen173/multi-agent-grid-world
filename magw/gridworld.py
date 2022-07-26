@@ -8,7 +8,7 @@ import os
 import sys
 import itertools
 
-from utils import loadmap
+from magw.utils import loadmap
 
 import numpy as np
 
