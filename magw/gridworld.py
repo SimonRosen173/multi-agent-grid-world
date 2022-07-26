@@ -26,7 +26,7 @@ from pygame import sprite
 # ENUMS #
 #########
 class Action(Enum):
-    NOOP = 0
+    WAIT = 0
     FORWARD = 1
     TURN_LEFT = 2
     TURN_RIGHT = 3
@@ -47,16 +47,108 @@ class Direction(Enum):
 ###########
 # HISTORY #
 ###########
-class History:
-    def __init__(self):
-        pass
+class EnvHistory:
+    _DEFAULT_LOGGING_CONFIG = {
+        "joint_action": True,
+        "joint_state": True,
+        "reward": True,
+        "info": True,
+        "is_done": True
+    }
+
+    def __init__(self, n_agents, actions_type="cardinal", logging_config=None,
+                 joint_start_state=None, episode_no = -1):
+        self.n_agents = n_agents
+        self.actions_type = actions_type
+        self.episode_no = episode_no
+
+        self.curr_step = 0
+
+        self.joint_action_history = {}
+        self.joint_action_str_history = {}
+        self.joint_state_history = {}
+        self.reward_history = {}
+        self.info_history = {}
+        self.is_done_history = {}
+
+        self.cum_reward = 0
+
+        self.logging_config = _copy_to_dict(logging_config, self._DEFAULT_LOGGING_CONFIG)
+
+        if self.logging_config["joint_state"] and joint_start_state is not None:
+            self.joint_state_history[0] = joint_start_state
+
+        if actions_type != "cardinal":
+            raise NotImplementedError("Only actions_type='cardinal' is supported right now.")
+
+    def step(self, joint_action=None, next_joint_state=None, reward=None, is_done=None, info=None):
+        curr_step = self.curr_step
+
+        if self.logging_config["joint_action"]:
+            self.joint_action_history[curr_step] = joint_action
+            action_str_map = {
+                Action.WAIT: "WAIT",
+                Action.NORTH: "UP",
+                Action.EAST: "RIGHT",
+                Action.SOUTH: "DOWN",
+                Action.WEST: "LEFT"
+            }
+            action_str = [action_str_map[action] for action in joint_action]
+            self.joint_action_str_history[curr_step] = action_str
+
+        if self.logging_config["joint_state"]:
+            self.joint_state_history[curr_step + 1] = next_joint_state
+
+        if self.logging_config["reward"]:
+            self.reward_history[curr_step] = reward
+            self.cum_reward += reward
+
+        if self.logging_config["info"]:
+            self.info_history[curr_step] = info
+
+        if self.logging_config["is_done"] and is_done:  # Only logs when is_done
+            self.is_done_history[curr_step] = is_done
+
+        self.curr_step += 1
+
+    def reset(self, episode_no, start_joint_state):
+        self.curr_step = 0
+        self.episode_no = episode_no
+
+        self.joint_action_history = {}
+        self.joint_state_history = {}
+        self.reward_history = {}
+        self.info_history = {}
+
+        self.joint_state_history[0] = start_joint_state
+
+    def to_dict(self):
+        out_dict = {
+            "episode": self.episode_no
+        }
+
+        if self.logging_config["joint_action"]:
+            out_dict["joint_action"] = self.joint_action_history
+
+        if self.logging_config["joint_state"]:
+            out_dict["joint_state"] = self.joint_state_history
+
+        if self.logging_config["reward"]:
+            out_dict["reward"] = self.reward_history
+
+        if self.logging_config["info"]:
+            out_dict["info"] = self.info_history
+
+        return out_dict
 
 
 ##################
 # HELPER METHODS #
 ##################
 # There is probs a method that does this already :P
-def _copy_to_dict(from_dict, to_dict):
+def _copy_to_dict(from_dict: Optional[Dict], to_dict: Dict):
+    if from_dict is None:
+        from_dict = {}
     for key in from_dict.keys():
         to_dict[key] = from_dict[key]
     return to_dict
@@ -166,7 +258,7 @@ class GridWorld(gym.Env):
     }
     _DEFAULT_DYNAMICS_CONFIG = {
         "collisions_enabled": True,
-        "collisions_at_goals": False,
+        "collisions_at_goals": True,
         "slip_prob": 0,
     }
 
@@ -192,10 +284,13 @@ class GridWorld(gym.Env):
                  is_rendering=False,
                  rendering_config={},
                  dynamics_config: Dict = {},
+                 logging_config: Optional[Dict] = None,
                  ):
 
         assert n_agents > 0, f"n_agents must be greater than 0 (n_agents was {n_agents})"
         self._n_agents: int = n_agents
+
+        self.episode_no = 0
 
         # Rewards
         # GridWorld._validate_rewards_config(rewards_config)
@@ -204,7 +299,7 @@ class GridWorld(gym.Env):
         # ACTIONS
         self._slip_prob = slip_prob
         self._actions_type = actions_type
-        self._valid_actions = [Action.NOOP, Action.PICK_UP]
+        self._valid_actions = [Action.WAIT]  # , Action.PICK_UP] For now WAIT acts as pickup
         if actions_type == "cardinal":
             self._move_actions = [Action.NORTH, Action.EAST, Action.SOUTH, Action.WEST]
         elif actions_type == "turn":
@@ -215,7 +310,7 @@ class GridWorld(gym.Env):
         self._n_actions = len(self._valid_actions)
 
         self._actions_map_e2s = {}  # Maps action enum to action in action_space - enum to(2) space
-        self._actions_map_s2e = {} # Maps action in action_space to action enum - space to(2) enum
+        self._actions_map_s2e = {}  # Maps action in action_space to action enum - space to(2) enum
         for i, val in enumerate(self._valid_actions):
             self._actions_map_e2s[val] = i
             self._actions_map_s2e[i] = val
@@ -225,21 +320,23 @@ class GridWorld(gym.Env):
         # OBSERVATIONS
         self._observations_type = observations_type
 
-        # Grid
+        # GRID
         self._grid: np.ndarray = self._load_grid(grid, grid_input_type)
         self._width = self._grid.shape[0]
         self._height = self._grid.shape[1]
+        # Find valid states
+        # NOTE: Only counts 0 as valid state
+        self._valid_states: List[Tuple[int, int]] = list(map(tuple, np.argwhere(self._grid == 0)))
+        self.n_valid_states: int = len(self._valid_states)
 
-        # Agents
+        # AGENTS
         # Data oriented model chosen for agents for efficiency and performance
         self._agents_direction = [0 for _ in range(n_agents)]
-        self._joint_pos = joint_start_state
-        self._joint_start_state = joint_start_state
-        # self._agents_x = [0 for _ in range(n_agents)]
-        # self._agents_y = [0 for _ in range(n_agents)]
+        self._joint_pos: List[Tuple[int, int]] = joint_start_state
+        self._joint_start_state: List[Tuple[int, int]] = joint_start_state
 
         # Goals
-        self._goals = goals
+        self._goals: Set[Tuple[int, int]] = goals
         # self._joint_goals = set(itertools.product(*[list(goals) for _ in range(n_agents)]))
         self._desirable_joint_goals: Set[Tuple[Tuple[int, int], ...]] = desirable_joint_goals
 
@@ -253,6 +350,12 @@ class GridWorld(gym.Env):
         # Indicates if a number in the grid can be collided with based off 'no >= _collision_threshold'
         self._collision_threshold = 1
         self._dynamics_config = _copy_to_dict(dynamics_config, GridWorld._DEFAULT_DYNAMICS_CONFIG)
+        if not self._dynamics_config["collisions_at_goals"]:
+            print("[WARNING] collisions at goals is not fully working")
+
+        # HISTORY
+        self.env_history = EnvHistory(n_agents, actions_type, logging_config,
+                                      self._joint_start_state,self.episode_no)
 
         # Rendering
         self.viewer = None
@@ -408,8 +511,8 @@ class GridWorld(gym.Env):
 
         # edge attributes
         edge_agent_id = [i for i in range(n_agents)]
-        edge_is_stationary = [(True if x[0]==x[1] else False) for x in edges_list]
-        edge_attributes = {edges_list[i]: {"agent_id":i, "is_stationary": edge_is_stationary[i]}
+        edge_is_stationary = [(True if x[0] == x[1] else False) for x in edges_list]
+        edge_attributes = {edges_list[i]: {"agent_id": i, "is_stationary": edge_is_stationary[i]}
                            for i in range(len(edges_list))}
         nx.set_edge_attributes(dg, edge_attributes)
 
@@ -419,12 +522,12 @@ class GridWorld(gym.Env):
 
         # Pass through collisions
         edges = [edge for edge in dg.edges()]
-        edges_seen = {edge:False for edge in edges}
+        edges_seen = {edge: False for edge in edges}
         for edge in edges:
             if not edges_seen[edge]:
                 rev_edge = (edge[1], edge[0])
                 if rev_edge in dg.edges():
-                    edges_seen[rev_edge]=True
+                    edges_seen[rev_edge] = True
                     edge_attr = dg[edge[0]][edge[1]]
                     rev_edge_attr = dg[rev_edge[0]][rev_edge[1]]
                     problem_agents.add(edge_attr["agent_id"])
@@ -438,7 +541,7 @@ class GridWorld(gym.Env):
 
         # Same cell collisions
         in_edges_nodes = [(node, list(dg.in_edges(node))) for node in dg.nodes()]
-        problem_nodes_edges = list(filter(lambda x: True if len(x[1])>1 else False, in_edges_nodes))
+        problem_nodes_edges = list(filter(lambda x: True if len(x[1]) > 1 else False, in_edges_nodes))
         problem_nodes = [el[0] for el in problem_nodes_edges]
 
         while len(problem_nodes) > 0:
@@ -485,7 +588,7 @@ class GridWorld(gym.Env):
 
     # HELPER
     # Redo to make static so I can use njit
-    def _take_joint_action(self, joint_action: List[int]):
+    def _take_joint_action(self, joint_action: Union[List[int], List[Action]]):
         # TODO: Fix bug where next_joint_pos contains None values if agents start from same location
         #  and end at same location
         grid = self._grid
@@ -493,14 +596,14 @@ class GridWorld(gym.Env):
         n_agents = self._n_agents
 
         def in_bounds(pos: Tuple[int,int]):
-            y, x = pos
-            return 0 <= y < grid.shape[0] and 0 <= x < grid.shape[1]
+            _y, _x = pos
+            return 0 <= _y < grid.shape[0] and 0 <= _x < grid.shape[1]
 
         reward = 0
         is_done = False
         info = ""
 
-        actions_map_s2e = self._actions_map_s2e
+        # actions_map_s2e = self._actions_map_s2e
         if self._actions_type == "cardinal":
             curr_joint_pos = self._joint_pos
             cand_joint_pos = []
@@ -516,12 +619,14 @@ class GridWorld(gym.Env):
                 # cand_pos - candidate pos
                 # actions_map_s2e[action]
                 cand_pos = None
-                if action == Action.PICK_UP or action == Action.NOOP:
+                if action == Action.WAIT:
                     cand_pos = curr_pos
                     if curr_pos in self._goals:
                         reward += rewards_config["wait_at_goal"]
                     else:
                         reward += rewards_config["wait"]
+                elif action == Action.PICK_UP:
+                    raise NotImplementedError("Action.PICK_UP not supported. Use Action.WAIT instead.")
                 elif action in action_set:
                     if np.random.rand() < self._dynamics_config["slip_prob"]:
                         action = np.random.choice(slip_map[action])
@@ -552,7 +657,7 @@ class GridWorld(gym.Env):
         else:
             raise NotImplementedError
 
-        joint_noop = [Action.NOOP for _ in range(n_agents)]
+        joint_noop = [Action.WAIT for _ in range(n_agents)]
         if joint_action == joint_noop:
             next_joint_pos = self._joint_pos
 
@@ -586,16 +691,32 @@ class GridWorld(gym.Env):
 
         self._joint_pos = next_joint_pos
 
-
         return next_joint_pos, reward, is_done, info
 
     # GYM
-    def reset(self, **kwargs):
-        pass
+    # noinspection PyMethodOverriding
+    def reset(self,
+              joint_start_state: Optional[List[Tuple[int, int]]] = None,
+              random_start: bool = False):
 
-    def step(self, joint_action: Union[List[int], List[Action]], is_enum=False) -> Union[
-        Tuple[ObsType, float, bool, bool, dict], Tuple[ObsType, float, bool, dict]
-    ]:
+        if joint_start_state is None:
+            if not random_start:
+                joint_start_state = self._joint_start_state
+            else:
+                # Set joint_start_state to n_agents no of valid_states - i.e. each agent is at distinct valid
+                # state
+                valid_states_ind = list(range(len(self._valid_states)))
+                joint_start_state_ind = list(np.random.choice(valid_states_ind, self._n_agents, replace=False))
+                joint_start_state = [self._valid_states[ind] for ind in joint_start_state_ind]
+
+        self._joint_pos = joint_start_state
+
+        self.env_history.reset(self.episode_no, joint_start_state)
+
+        return joint_start_state
+
+    def step(self, joint_action: Union[List[int], List[Action]], is_enum=False) -> \
+            Tuple[ObsType, float, bool, dict]:
         if not is_enum:
             # old_joint_action = joint_action
             for i, action in enumerate(joint_action):
@@ -603,7 +724,11 @@ class GridWorld(gym.Env):
         # If RGB -> return RGB array
         # If joint state -> return list of states
         if self._observations_type == "joint_state":
-            return self._take_joint_action(joint_action)
+            next_joint_pos, reward, is_done, info = self._take_joint_action(joint_action)
+            self.env_history.step(joint_action=joint_action, next_joint_state=next_joint_pos,
+                                  reward=reward, is_done=is_done, info=info)
+            return next_joint_pos, reward, is_done, {"desc": info}
+            # return self._take_joint_action(joint_action)
         elif self._observations_type == "rgb":
             pass
         else:
@@ -655,16 +780,16 @@ def test():
 def interactive(env: GridWorld):
     env.render()
     key_action_map = {
-        pygame.K_n: Action.NORTH,
-        pygame.K_s: Action.SOUTH,
-        pygame.K_e: Action.EAST,
-        pygame.K_w: Action.WEST,
+        # pygame.K_n: Action.NORTH,
+        # pygame.K_s: Action.SOUTH,
+        # pygame.K_e: Action.EAST,
+        # pygame.K_w: Action.WEST,
         pygame.K_UP: Action.NORTH,
         pygame.K_DOWN: Action.SOUTH,
         pygame.K_RIGHT: Action.EAST,
         pygame.K_LEFT: Action.WEST,
-        pygame.K_p: Action.PICK_UP,
-        pygame.K_x: Action.NOOP
+        # pygame.K_p: Action.PICK_UP,
+        pygame.K_x: Action.WAIT
     }
 
     key_buffer = []
@@ -682,9 +807,9 @@ def interactive(env: GridWorld):
                 # print(pygame.K_KP_ENTER)
                 if event.key == 13:
                     if len(action_buffer) < env.n_agents:
-                        print(f"Not enough actions chosen. Actions choosen so far = {len(action_buffer)}")
+                        print(f"Not enough actions chosen. Actions chosen so far = {len(action_buffer)}")
                     elif len(action_buffer) > env.n_agents:
-                        print(f"Too many actions chosen. Actions choosen so far = {len(action_buffer)}")
+                        print(f"Too many actions chosen. Actions chosen so far = {len(action_buffer)}")
                     else:
                         next_state, reward, is_done, info = env.step(action_buffer, is_enum=True)
                         print(f"next_state={next_state}, reward={reward}, is_done={is_done}, info={info}")
@@ -693,6 +818,56 @@ def interactive(env: GridWorld):
                     action_buffer = []
                 elif event.key in key_action_map.keys():
                     action_buffer.append(key_action_map[event.key])
+                elif event.key == pygame.K_r:
+                    joint_start_state = env.reset(random_start=True)
+                    print(f"Env reset - joint_start_state = {joint_start_state}")
+                    env.render()
+                elif event.key == pygame.K_p:
+                    env_hist = env.env_history
+                    logging_config = env_hist.logging_config
+                    # history_dict = env.env_history.to_dict()
+                    print(f"#####################")
+                    print(f"#      HISTORY      #")
+                    print(f"#####################")
+                    print(f"---------------------")
+                    print(f"|       Stats       |")
+                    print(f"---------------------")
+                    print(f" episode no = {env_hist.episode_no}")
+                    print(f" no steps = {env_hist.curr_step}")
+                    print(f" cumulative reward = {env_hist.cum_reward}")
+
+                    if logging_config["joint_action"]:
+                        print(f"---------------------")
+                        print(f"|   Joint Actions    |")
+                        print(f"---------------------")
+                        print(f" Joint actions = {env_hist.joint_action_str_history}")
+
+                    if logging_config["joint_state"]:
+                        print(f"---------------------")
+                        print(f"|    Joint States    |")
+                        print(f"---------------------")
+                        print(f" Joint states = {env_hist.joint_state_history}")
+
+                    if logging_config["reward"]:
+                        print(f"---------------------")
+                        print(f"|      Rewards       |")
+                        print(f"---------------------")
+                        print(f" Rewards = {env_hist.reward_history}")
+
+                    if logging_config["is_done"]:
+                        print(f"---------------------")
+                        print(f"|      Is Done       |")
+                        print(f"---------------------")
+                        print(f" Is done = {env_hist.is_done_history}")
+
+                    if logging_config["info"]:
+                        print(f"---------------------")
+                        print(f"|       Infos        |")
+                        print(f"---------------------")
+                        print(f" Infos = {env_hist.info_history}")
+
+                    print(f"#####################")
+
                 elif event.key == pygame.K_ESCAPE:
                     pygame.quit()
                     sys.exit()
