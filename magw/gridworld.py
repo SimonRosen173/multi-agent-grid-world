@@ -281,6 +281,7 @@ class GridWorld(gym.Env):
                  slip_prob: float = 0.0,
                  actions_type="cardinal",  # ["cardinal","turn"]
                  observations_type="joint_state",  # ["joint_state","rgb"],
+                 flatten_state=False,  # Flatten state when returned
                  is_rendering=False,
                  rendering_config={},
                  dynamics_config: Dict = {},
@@ -289,6 +290,8 @@ class GridWorld(gym.Env):
 
         assert n_agents > 0, f"n_agents must be greater than 0 (n_agents was {n_agents})"
         self._n_agents: int = n_agents
+
+        self._flatten_state = flatten_state
 
         self.episode_no = 0
 
@@ -314,8 +317,6 @@ class GridWorld(gym.Env):
         for i, val in enumerate(self._valid_actions):
             self._actions_map_e2s[val] = i
             self._actions_map_s2e[i] = val
-        # action_space = spaces.Discrete(self._n_actions)
-        self.joint_action_space = spaces.Tuple([spaces.Discrete(self._n_actions) for _ in range(self._n_agents)])
 
         # OBSERVATIONS
         self._observations_type = observations_type
@@ -364,6 +365,19 @@ class GridWorld(gym.Env):
 
         if is_rendering or observations_type == "rgb":
             self._init_rendering()
+
+        # GYM SPACES
+        # Action Space
+        self.action_space = spaces.Tuple([spaces.Discrete(self._n_actions) for _ in range(self._n_agents)])
+
+        # Observation Space
+        if self._observations_type == "joint_state":
+            if self._flatten_state:
+                self.observation_space = spaces.Discrete(self._n_agents)
+            else:
+                self.observation_space = spaces.Tuple([spaces.Discrete(2) for _ in range(self._n_agents)])
+        elif self._observations_type == "rgb":
+            raise NotImplementedError("RGB observation space has not been implemented")
 
     def _init_rendering(self):
         self._is_rendering_init = True
@@ -429,6 +443,13 @@ class GridWorld(gym.Env):
             _grid = loadmap.load(grid, grid_input_type)
 
         return _grid
+
+    # HELPER METHODS
+    def flatten_states(self, joint_state: List[Tuple[int, int]]) -> List[int]:
+        return [int(np.ravel_multi_index(state, self._grid.shape)) for state in joint_state]
+
+    def unflatten_states(self, joint_state: List[int]) -> List[Tuple[int, int]]:
+        return [tuple(np.unravel_index(state, self._grid.shape)) for state in joint_state]
 
     # PYGAME RENDERING
     def _make_render_grid(self):
@@ -713,6 +734,9 @@ class GridWorld(gym.Env):
 
         self.env_history.reset(self.episode_no, joint_start_state)
 
+        if self._flatten_state:
+            joint_start_state = self.flatten_states(joint_start_state)
+
         return joint_start_state
 
     def step(self, joint_action: Union[List[int], List[Action]], is_enum=False) -> \
@@ -727,6 +751,9 @@ class GridWorld(gym.Env):
             next_joint_pos, reward, is_done, info = self._take_joint_action(joint_action)
             self.env_history.step(joint_action=joint_action, next_joint_state=next_joint_pos,
                                   reward=reward, is_done=is_done, info=info)
+            if self._flatten_state:
+                next_joint_pos = self.flatten_states(next_joint_pos)
+
             return next_joint_pos, reward, is_done, {"desc": info}
             # return self._take_joint_action(joint_action)
         elif self._observations_type == "rgb":
@@ -771,9 +798,13 @@ def test():
     dynamics_config = {"slip_prob": 0.0}
 
     env = GridWorld(2, "corridors", goals=goals, desirable_joint_goals=desirable_joint_goals,
-                    joint_start_state=joint_start_state,
+                    joint_start_state=joint_start_state, flatten_state=True,
                     grid_input_type="map_name", is_rendering=True,
                     dynamics_config=dynamics_config)
+
+    print(env.action_space)
+    print(env.observation_space)
+
     interactive(env)
 
 
