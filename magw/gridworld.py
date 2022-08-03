@@ -1,8 +1,9 @@
 # Some rendering code adapted from https://github.com/raillab/composition/blob/master/gym_repoman
 
 from collections import defaultdict, OrderedDict
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import List, Tuple, Optional, Dict, Union, IO, Set
+import copy
 
 import os
 import sys
@@ -11,6 +12,8 @@ import itertools
 from magw.utils import loadmap
 
 import numpy as np
+
+import cv2
 
 import networkx as nx
 
@@ -25,7 +28,7 @@ from pygame import sprite
 #########
 # ENUMS #
 #########
-class Action(Enum):
+class Action(IntEnum):
     WAIT = 0
     FORWARD = 1
     TURN_LEFT = 2
@@ -53,11 +56,12 @@ class EnvHistory:
         "joint_state": True,
         "reward": True,
         "info": True,
-        "is_done": True
+        "is_done": True,
+        "frames": False  # RGB frames
     }
 
     def __init__(self, n_agents, actions_type="cardinal", logging_config=None,
-                 joint_start_state=None, episode_no = -1):
+                 joint_start_state=None, episode_no=-1):
         self.n_agents = n_agents
         self.actions_type = actions_type
         self.episode_no = episode_no
@@ -70,8 +74,9 @@ class EnvHistory:
         self.reward_history = {}
         self.info_history = {}
         self.is_done_history = {}
+        self.frame_history = {}
 
-        self.cum_reward = 0
+        self.eps_return = 0
 
         self.logging_config = _copy_to_dict(logging_config, self._DEFAULT_LOGGING_CONFIG)
 
@@ -101,7 +106,7 @@ class EnvHistory:
 
         if self.logging_config["reward"]:
             self.reward_history[curr_step] = reward
-            self.cum_reward += reward
+            self.eps_return += reward
 
         if self.logging_config["info"]:
             self.info_history[curr_step] = info
@@ -115,12 +120,23 @@ class EnvHistory:
         self.curr_step = 0
         self.episode_no = episode_no
 
+        self.eps_return = 0
         self.joint_action_history = {}
+        self.joint_action_str_history = {}
         self.joint_state_history = {}
         self.reward_history = {}
         self.info_history = {}
+        self.is_done_history = {}
+        self.frame_history = {}
 
         self.joint_state_history[0] = start_joint_state
+
+    # Log RGB frames
+    def log_frame(self, frame, step=None):
+        if step is None:
+            step = self.curr_step
+
+        self.frame_history[step] = frame
 
     def to_dict(self):
         out_dict = {
@@ -140,6 +156,37 @@ class EnvHistory:
             out_dict["info"] = self.info_history
 
         return out_dict
+
+    # TODO
+    def save_video(self, base_path=None, video_name=None, fps=30):
+        if not self.logging_config["frames"]:
+            raise Exception("save_video cannot be called if frames aren't being logged "
+                            "(logging_config['frames']=False)")
+
+        if video_name is None:
+            video_name = f"video_{self.episode_no}"
+
+        if base_path is None:
+            file_path = video_name + ".mp4"
+        else:
+            file_path = base_path + os.path.sep + video_name + ".mp4"
+
+        frame_hist = self.frame_history
+        steps_frames = [(key, frame_hist[key]) for key in frame_hist.keys()]
+        steps_frames.sort(key=lambda x: x[0])
+
+        height, width, channels = steps_frames[0][1].shape
+
+        fourcc = cv2.VideoWriter_fourcc(*'MP42')  # FourCC is a 4-byte code used to specify the video codec.
+        video = cv2.VideoWriter(file_path, fourcc, float(fps), (width, height))
+
+        for step, frame in steps_frames:
+            frame = frame[:, :, ::-1]  # change from BGR to RBG image
+            # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            video.write(frame)
+
+        video.release()
+        # video = cv2.VideoWriter(video_name+".mp4")
 
 
 ##################
@@ -272,9 +319,15 @@ class GridWorld(gym.Env):
         1: "wall"
     }
 
+    metadata = {
+        'render.modes': ['human', 'rgb_array'],
+        'video.frames_per_second': 5
+    }
+
     def __init__(self,
                  n_agents: int, grid: Union[str, IO, np.ndarray],
-                 goals: Set[Tuple[int, int]], desirable_joint_goals: Set[Tuple[Tuple[int, int], ...]],
+                 goals: Set[Tuple[int, int]],
+                 desirable_joint_goals: Set[Tuple[Tuple[int, int], ...]],
                  joint_start_state: List[Tuple[int, int]],
                  grid_input_type: str = "arr",  # ["arr","str","file_path", "map_name"]
                  rewards_config: Dict[str, float] = {},
@@ -283,10 +336,23 @@ class GridWorld(gym.Env):
                  observations_type="joint_state",  # ["joint_state","rgb"],
                  flatten_state=False,  # Flatten state when returned
                  is_rendering=False,
+                 render_mode="rgb_array",
                  rendering_config={},
                  dynamics_config: Dict = {},
                  logging_config: Optional[Dict] = None,
                  ):
+        _locals = locals()
+
+        exclude_keys = {"self", "_locals", "exclude_keys"}
+        _locals = {key: value for (key, value) in _locals.items() if key not in exclude_keys}
+
+        self._init_args = copy.deepcopy(_locals)
+
+        # self._init_args = copy.deepcopy(locals())
+        # del self._init_args["self"]
+
+        # Env variable
+        self.render_mode = render_mode
 
         assert n_agents > 0, f"n_agents must be greater than 0 (n_agents was {n_agents})"
         self._n_agents: int = n_agents
@@ -423,6 +489,22 @@ class GridWorld(gym.Env):
     @property
     def n_agents(self):
         return self._n_agents
+
+    @property
+    def flatten_state(self):
+        return self._flatten_state
+
+    def get_config(self):
+        config_dict = copy.deepcopy(self._init_args)
+        # Config cannot contain sets since it needs to be JSON serializable
+        config_dict["desirable_joint_goals"] = list(config_dict["desirable_joint_goals"])
+        config_dict["goals"] = list(config_dict["goals"])
+
+        config_dict["rewards_config"] = self._rewards_config
+        config_dict["rendering_config"] = self._rendering_config
+        config_dict["dynamics_config"] = self._dynamics_config
+        config_dict["logging_config"] = self.env_history.logging_config
+        return config_dict
 
     @staticmethod
     def _validate_rewards_config(rewards_config):
@@ -573,7 +655,7 @@ class GridWorld(gym.Env):
                 non_stationary_edges = list(filter(lambda x: False if x[0] == x[1] else True,
                                                    problem_node_edges))
                 for edge in non_stationary_edges:
-                    print(edge)
+                    # print(edge)
                     n_removed_edges += 1
                     edge_attr = dg[edge[0]][edge[1]]
                     problem_agents.add(edge_attr["agent_id"])
@@ -716,11 +798,26 @@ class GridWorld(gym.Env):
 
     # GYM
     # noinspection PyMethodOverriding
+    #
     def reset(self,
-              joint_start_state: Optional[List[Tuple[int, int]]] = None,
-              random_start: bool = False):
+              joint_start_state: Optional[Union[List[Tuple[int, int]], List[int]]] = None,
+              random_start: bool = False, increment_episode=True) -> Union[List[int], List[Tuple[int, int]]]:
 
-        if joint_start_state is None:
+        # if self._flatten_state and joint_start_state is not None:
+        #     # TODO: test this
+        #     assert type(joint_start_state[0]) == int, "If self._flatten_state=True then joint_start_state " \
+        #                                                "must be of type List[int]"
+        #     joint_start_state = self.unflatten_states(joint_start_state)
+
+        if joint_start_state is not None:
+            if type(joint_start_state[0]) == int:
+                joint_start_state = self.unflatten_states(joint_start_state)
+            elif type(joint_start_state[0]) == tuple:
+                pass
+            else:
+                raise ValueError("joint_start_state is of wrong type")
+
+        else:  #  joint_start_state is None
             if not random_start:
                 joint_start_state = self._joint_start_state
             else:
@@ -732,6 +829,8 @@ class GridWorld(gym.Env):
 
         self._joint_pos = joint_start_state
 
+        if increment_episode:
+            self.episode_no += 1
         self.env_history.reset(self.episode_no, joint_start_state)
 
         if self._flatten_state:
@@ -741,6 +840,7 @@ class GridWorld(gym.Env):
 
     def step(self, joint_action: Union[List[int], List[Action]], is_enum=False) -> \
             Tuple[ObsType, float, bool, dict]:
+        joint_action = joint_action.copy()
         if not is_enum:
             # old_joint_action = joint_action
             for i, action in enumerate(joint_action):
@@ -754,7 +854,7 @@ class GridWorld(gym.Env):
             if self._flatten_state:
                 next_joint_pos = self.flatten_states(next_joint_pos)
 
-            return next_joint_pos, reward, is_done, {"desc": info}
+            return tuple(next_joint_pos), reward, is_done, {"desc": info}
             # return self._take_joint_action(joint_action)
         elif self._observations_type == "rgb":
             pass
@@ -762,6 +862,7 @@ class GridWorld(gym.Env):
             raise NotImplementedError
 
     def render(self, mode="human", close=False) -> Optional[Union[RenderFrame, List[RenderFrame]]]:
+        # Probably need to actually do something with 'mode'
         if not self._is_rendering_init:
             self._init_rendering()
 
@@ -774,7 +875,8 @@ class GridWorld(gym.Env):
         if self.viewer is None:
             self.viewer = pygame.display.set_mode(self._rendering_config["window_size"], 0, self._bestdepth)
 
-        self._clock.tick(10 if mode != 'human' else 2)
+        if mode == "human":
+            self._clock.tick(2)
 
         # agent_sprites =
         # agent_sprites[0].update_pos((3,3))
@@ -782,7 +884,13 @@ class GridWorld(gym.Env):
             agent.update_pos(pos)
 
         arr = self._draw_screen(self.viewer)
-        pygame.display.flip()
+
+        if mode == "human":
+            pygame.display.flip()
+
+        if self.env_history.logging_config["frames"]:
+            self.env_history.log_frame(arr)
+
         return arr
 
 
@@ -796,19 +904,23 @@ def test():
     joint_start_state = [(1, 1), (1, 3)]
 
     dynamics_config = {"slip_prob": 0.0}
+    logging_config = {"frames": True}
 
     env = GridWorld(2, "corridors", goals=goals, desirable_joint_goals=desirable_joint_goals,
                     joint_start_state=joint_start_state, flatten_state=True,
                     grid_input_type="map_name", is_rendering=True,
-                    dynamics_config=dynamics_config)
+                    dynamics_config=dynamics_config, logging_config=logging_config)
 
     print(env.action_space)
     print(env.observation_space)
 
+    config = env.get_config()
+    # print(env.get_config())
+
     interactive(env)
 
 
-def interactive(env: GridWorld):
+def interactive(env: GridWorld, video_path: Optional[str] = None):
     env.render()
     key_action_map = {
         # pygame.K_n: Action.NORTH,
@@ -865,7 +977,7 @@ def interactive(env: GridWorld):
                     print(f"---------------------")
                     print(f" episode no = {env_hist.episode_no}")
                     print(f" no steps = {env_hist.curr_step}")
-                    print(f" cumulative reward = {env_hist.cum_reward}")
+                    print(f" cumulative reward = {env_hist.eps_return}")
 
                     if logging_config["joint_action"]:
                         print(f"---------------------")
@@ -899,6 +1011,9 @@ def interactive(env: GridWorld):
 
                     print(f"#####################")
 
+                    # print(env_hist.frame_history.keys())
+                elif event.key == pygame.K_s:
+                    env.env_history.save_video("videos", "test", fps=2)
                 elif event.key == pygame.K_ESCAPE:
                     pygame.quit()
                     sys.exit()
