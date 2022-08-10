@@ -1,19 +1,12 @@
 # Some rendering code adapted from https://github.com/raillab/composition/blob/master/gym_repoman
 
-from collections import defaultdict, OrderedDict
-from enum import Enum, IntEnum
 from typing import List, Tuple, Optional, Dict, Union, IO, Set
 import copy
 
 import os
 import sys
-import itertools
-
-from magw.utils import loadmap
 
 import numpy as np
-
-import cv2
 
 import networkx as nx
 
@@ -21,270 +14,14 @@ import gym
 from gym import spaces
 from gym.core import ActType, ObsType, RenderFrame
 
+
+from magw.utils.general import copy_to_dict
+from magw.utils import loadmap
+from magw.history import EnvHistory
+from magw.enums import Action, Direction
+from magw.sprites import GoalSprite, AgentSprite, load_image, calculate_topleft_position
+
 import pygame
-from pygame import sprite
-
-
-#########
-# ENUMS #
-#########
-class Action(IntEnum):
-    WAIT = 0
-    FORWARD = 1
-    TURN_LEFT = 2
-    TURN_RIGHT = 3
-    PICK_UP = 4
-    NORTH = 5
-    EAST = 6
-    SOUTH = 7
-    WEST = 8
-
-
-class Direction(Enum):
-    NORTH = 0
-    EAST = 1
-    SOUTH = 2
-    WEST = 3
-
-
-###########
-# HISTORY #
-###########
-class EnvHistory:
-    _DEFAULT_LOGGING_CONFIG = {
-        "joint_action": True,
-        "joint_state": True,
-        "reward": True,
-        "info": True,
-        "is_done": True,
-        "frames": False  # RGB frames
-    }
-
-    def __init__(self, n_agents, actions_type="cardinal", logging_config=None,
-                 joint_start_state=None, episode_no=-1):
-        self.n_agents = n_agents
-        self.actions_type = actions_type
-        self.episode_no = episode_no
-
-        self.curr_step = 0
-
-        self.joint_action_history = {}
-        self.joint_action_str_history = {}
-        self.joint_state_history = {}
-        self.reward_history = {}
-        self.info_history = {}
-        self.is_done_history = {}
-        self.frame_history = {}
-
-        self.eps_return = 0
-
-        self.logging_config = _copy_to_dict(logging_config, self._DEFAULT_LOGGING_CONFIG)
-
-        if self.logging_config["joint_state"] and joint_start_state is not None:
-            self.joint_state_history[0] = joint_start_state
-
-        if actions_type != "cardinal":
-            raise NotImplementedError("Only actions_type='cardinal' is supported right now.")
-
-    def step(self, joint_action=None, next_joint_state=None, reward=None, is_done=None, info=None):
-        curr_step = self.curr_step
-
-        if self.logging_config["joint_action"]:
-            self.joint_action_history[curr_step] = joint_action
-            action_str_map = {
-                Action.WAIT: "WAIT",
-                Action.NORTH: "UP",
-                Action.EAST: "RIGHT",
-                Action.SOUTH: "DOWN",
-                Action.WEST: "LEFT"
-            }
-            action_str = [action_str_map[action] for action in joint_action]
-            self.joint_action_str_history[curr_step] = action_str
-
-        if self.logging_config["joint_state"]:
-            self.joint_state_history[curr_step + 1] = next_joint_state
-
-        if self.logging_config["reward"]:
-            self.reward_history[curr_step] = reward
-            self.eps_return += reward
-
-        if self.logging_config["info"]:
-            self.info_history[curr_step] = info
-
-        if self.logging_config["is_done"] and is_done:  # Only logs when is_done
-            self.is_done_history[curr_step] = is_done
-
-        self.curr_step += 1
-
-    def reset(self, episode_no, start_joint_state):
-        self.curr_step = 0
-        self.episode_no = episode_no
-
-        self.eps_return = 0
-        self.joint_action_history = {}
-        self.joint_action_str_history = {}
-        self.joint_state_history = {}
-        self.reward_history = {}
-        self.info_history = {}
-        self.is_done_history = {}
-        self.frame_history = {}
-
-        self.joint_state_history[0] = start_joint_state
-
-    # Log RGB frames
-    def log_frame(self, frame, step=None):
-        if step is None:
-            step = self.curr_step
-
-        self.frame_history[step] = frame
-
-    def to_dict(self):
-        out_dict = {
-            "episode": self.episode_no
-        }
-
-        if self.logging_config["joint_action"]:
-            out_dict["joint_action"] = self.joint_action_history
-
-        if self.logging_config["joint_state"]:
-            out_dict["joint_state"] = self.joint_state_history
-
-        if self.logging_config["reward"]:
-            out_dict["reward"] = self.reward_history
-
-        if self.logging_config["info"]:
-            out_dict["info"] = self.info_history
-
-        return out_dict
-
-    # TODO
-    def save_video(self, base_path=None, video_name=None, fps=30):
-        if not self.logging_config["frames"]:
-            raise Exception("save_video cannot be called if frames aren't being logged "
-                            "(logging_config['frames']=False)")
-
-        if video_name is None:
-            video_name = f"video_{self.episode_no}"
-
-        if base_path is None:
-            file_path = video_name + ".mp4"
-        else:
-            file_path = base_path + os.path.sep + video_name + ".mp4"
-
-        frame_hist = self.frame_history
-        steps_frames = [(key, frame_hist[key]) for key in frame_hist.keys()]
-        steps_frames.sort(key=lambda x: x[0])
-
-        height, width, channels = steps_frames[0][1].shape
-
-        fourcc = cv2.VideoWriter_fourcc(*'MP42')  # FourCC is a 4-byte code used to specify the video codec.
-        video = cv2.VideoWriter(file_path, fourcc, float(fps), (width, height))
-
-        for step, frame in steps_frames:
-            frame = frame[:, :, ::-1]  # change from BGR to RBG image
-            # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            video.write(frame)
-
-        video.release()
-        # video = cv2.VideoWriter(video_name+".mp4")
-
-
-##################
-# HELPER METHODS #
-##################
-# There is probs a method that does this already :P
-def _copy_to_dict(from_dict: Optional[Dict], to_dict: Dict):
-    if from_dict is None:
-        from_dict = {}
-    for key in from_dict.keys():
-        to_dict[key] = from_dict[key]
-    return to_dict
-
-
-PATH_SEP = os.path.sep
-BASE_PATH = os.path.split(os.path.abspath(__file__))[0]
-ASSETS_PATH = os.path.join(BASE_PATH, 'assets')
-
-
-def _load_image(name):
-    img_path = os.path.join(ASSETS_PATH, name)
-    try:
-        image = pygame.image.load(img_path)
-    except pygame.error:
-        print('Cannot load image:', img_path)
-        raise SystemExit()
-    image = image.convert_alpha()
-    return image
-
-
-def _calculate_topleft_position(position, sprite_size):
-    return sprite_size * position[1], sprite_size * position[0]
-
-
-###########
-# SPRITES #
-###########
-# TODO: Test
-class _GoalSprite(sprite.Sprite):
-    # TODO: Add images
-    _GOAL_IMAGES = {
-        "desirable": "blue_square.png",
-        "undesirable": "beige_square.png",
-    }
-
-    def __init__(self, sprite_size: int, is_desirable: bool, pos: Tuple[int, int] = None):
-        is_desirable_str = "desirable" if is_desirable else "undesirable"
-        self.name = f"goal_{is_desirable_str}"
-        self._is_desirable = is_desirable
-        self._sprite_size = sprite_size
-        sprite.Sprite.__init__(self)
-
-        image = _load_image(self._GOAL_IMAGES[is_desirable_str])
-        self.image = pygame.transform.scale(image, (sprite_size, sprite_size))
-        self.rect = self.image.get_rect()
-        self.position = pos
-        self.rect.topleft = _calculate_topleft_position(self.position, self._sprite_size)
-
-    def reset(self, position: Tuple[int, int]):
-        self.position = position
-        self.rect.topleft = _calculate_topleft_position(position, self._sprite_size)
-
-
-class _AgentSprite(sprite.Sprite):
-    _IMAGE_BASE_NAME = "character"  # TODO
-    _COLORS = ["red", "blue"]
-
-    def __init__(self, sprite_size: int, agent_no: int, start_pos: Tuple[int,int]):
-        self.name = f"agent_{agent_no}"
-        self._sprite_size = sprite_size
-        self._agent_no = agent_no
-
-        sprite.Sprite.__init__(self)
-        assert agent_no < len(self._COLORS), f"agent_no too high (agent_no={agent_no}>={len(self._COLORS)})"
-        img_name = f"{self._IMAGE_BASE_NAME}_{self._COLORS[agent_no]}.png"
-        image = _load_image(img_name)
-        self.image = pygame.transform.scale(image, (sprite_size, sprite_size))
-        self.rect = self.image.get_rect()
-
-        self.position = None
-        self.update_pos(start_pos)
-
-    def update_pos(self, pos):
-        self.position = pos
-        x, y = _calculate_topleft_position(self.position, self._sprite_size)
-        self.rect.update(x, y, self._sprite_size, self._sprite_size)
-        # print(f"Agent {self._agent_no}: pos={pos}, x,y={(x,y)}")
-
-        # self.rect.x, self.rect.y = _calculate_topleft_position(self.position, self._sprite_size)
-
-    def reset(self, position: Tuple[int, int]):
-        self.update_pos(position)
-        # self.position = position
-        # self.rect.topleft = _calculate_topleft_position(position, self._sprite_size)
-
-    def step(self, move: Tuple[int, int]):
-        self.position = (self.position[0] + move[0], self.position[1] + move[1])
-        self.rect.topleft = _calculate_topleft_position(self.position, self._sprite_size)
 
 
 ###############
@@ -363,7 +100,7 @@ class GridWorld(gym.Env):
 
         # Rewards
         # GridWorld._validate_rewards_config(rewards_config)
-        self._rewards_config = _copy_to_dict(rewards_config, GridWorld._DEFAULT_REWARDS)
+        self._rewards_config = copy_to_dict(rewards_config, GridWorld._DEFAULT_REWARDS)
 
         # ACTIONS
         self._slip_prob = slip_prob
@@ -416,7 +153,7 @@ class GridWorld(gym.Env):
         # Dynamics
         # Indicates if a number in the grid can be collided with based off 'no >= _collision_threshold'
         self._collision_threshold = 1
-        self._dynamics_config = _copy_to_dict(dynamics_config, GridWorld._DEFAULT_DYNAMICS_CONFIG)
+        self._dynamics_config = copy_to_dict(dynamics_config, GridWorld._DEFAULT_DYNAMICS_CONFIG)
         if not self._dynamics_config["collisions_at_goals"]:
             print("[WARNING] collisions at goals is not fully working")
 
@@ -427,7 +164,7 @@ class GridWorld(gym.Env):
         # Rendering
         self.viewer = None
         self._is_rendering_init = False
-        self._rendering_config = _copy_to_dict(rendering_config, self._DEFAULT_RENDERING_CONFIG)
+        self._rendering_config = copy_to_dict(rendering_config, self._DEFAULT_RENDERING_CONFIG)
 
         if is_rendering or observations_type == "rgb":
             self._init_rendering()
@@ -470,19 +207,19 @@ class GridWorld(gym.Env):
         self._goals_group = pygame.sprite.Group()
         self._agents_group = pygame.sprite.Group()
         self._render_group = pygame.sprite.RenderPlain()
-        # self.player = _AgentSprite(sprite_size, 0)
+        # self.player = AgentSprite(sprite_size, 0)
         # self.render_group.add(self.player)
 
         # Goals
         for goal in self._desirable_goals:
-            self._goals_group.add(_GoalSprite(sprite_size, True, goal))
+            self._goals_group.add(GoalSprite(sprite_size, True, goal))
         for goal in self._undesirable_goals:
-            self._goals_group.add(_GoalSprite(sprite_size, False, goal))
+            self._goals_group.add(GoalSprite(sprite_size, False, goal))
         self._render_group.add(self._goals_group.sprites())
 
         # Agents
         for agent_no in range(self._n_agents):
-            self._agents_group.add(_AgentSprite(sprite_size, agent_no,
+            self._agents_group.add(AgentSprite(sprite_size, agent_no,
                                                 self._joint_pos[agent_no]))
         self._render_group.add(self._agents_group.sprites())
 
@@ -546,9 +283,9 @@ class GridWorld(gym.Env):
                     image_name = self._ASSET_IMAGES["wall"]
                 else:
                     raise NotImplementedError
-                image = _load_image(image_name)
+                image = load_image(image_name)
                 image = pygame.transform.scale(image, (sprite_size, sprite_size))
-                position = _calculate_topleft_position((row, col), sprite_size)
+                position = calculate_topleft_position((row, col), sprite_size)
                 self._background.blit(image, position)
 
     def _draw_screen(self, surface):
