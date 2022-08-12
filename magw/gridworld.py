@@ -133,6 +133,10 @@ class GridWorld(gym.Env):
         self._valid_states: List[Tuple[int, int]] = list(map(tuple, np.argwhere(self._grid == 0)))
         self.n_valid_states: int = len(self._valid_states)
 
+        # valid start states - excludes goals as valid start states
+        self._valid_start_states = list(set(self._valid_states) - goals)
+        self.n_valid_start_states = len(self._valid_start_states)
+
         # AGENTS
         # Data oriented model chosen for agents for efficiency and performance
         self._agents_direction = [0 for _ in range(n_agents)]
@@ -584,9 +588,10 @@ class GridWorld(gym.Env):
             else:
                 # Set joint_start_state to n_agents no of valid_states - i.e. each agent is at distinct valid
                 # state
-                valid_states_ind = list(range(len(self._valid_states)))
-                joint_start_state_ind = list(np.random.choice(valid_states_ind, self._n_agents, replace=False))
-                joint_start_state = [self._valid_states[ind] for ind in joint_start_state_ind]
+                valid_start_states_ind = list(range(len(self._valid_start_states)))
+                joint_start_state_ind = list(np.random.choice(valid_start_states_ind, self._n_agents,
+                                                              replace=False))
+                joint_start_state = [self._valid_start_states[ind] for ind in joint_start_state_ind]
 
         self._joint_pos = joint_start_state
 
