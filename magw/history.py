@@ -25,13 +25,16 @@ class EnvHistory:
 
         self.curr_step = 0
 
-        self.joint_action_history = {}
-        self.joint_action_str_history = {}
-        self.joint_state_history = {}
-        self.reward_history = {}
-        self.info_history = {}
-        self.is_done_history = {}
-        self.frame_history = {}
+        self.joint_action_history = None
+        self.joint_action_str_history = None
+
+        self.joint_state_history = None
+        self.reward_history = None
+        self.info_history = None
+        self.is_done_history = None
+        self.frame_history = None
+
+        self._init_dicts()
 
         self.eps_return = 0
 
@@ -43,11 +46,24 @@ class EnvHistory:
         if actions_type != "cardinal":
             raise NotImplementedError("Only actions_type='cardinal' is supported right now.")
 
-    def step(self, joint_action=None, next_joint_state=None, reward=None, is_done=None, info=None):
+    def _init_dicts(self):
+        self.joint_action_history = {"given": {}, "taken": {}}
+        self.joint_action_str_history = {"given": {}, "taken": {}}
+
+        self.joint_state_history = {}
+        self.reward_history = {}
+        self.info_history = {}
+        self.is_done_history = {}
+        self.frame_history = {}
+
+    def step(self, joint_action_given=None, joint_action_taken=None, next_joint_state=None,
+             reward=None, is_done=None, info=None):
         curr_step = self.curr_step
 
         if self.logging_config["joint_action"]:
-            self.joint_action_history[curr_step] = joint_action
+            self.joint_action_history["given"][curr_step] = joint_action_given
+            self.joint_action_history["taken"][curr_step] = joint_action_taken
+
             action_str_map = {
                 Action.WAIT: "WAIT",
                 Action.NORTH: "UP",
@@ -55,8 +71,11 @@ class EnvHistory:
                 Action.SOUTH: "DOWN",
                 Action.WEST: "LEFT"
             }
-            action_str = [action_str_map[action] for action in joint_action]
-            self.joint_action_str_history[curr_step] = action_str
+            action_given_str = [action_str_map[action] for action in joint_action_given]
+            self.joint_action_str_history["given"][curr_step] = action_given_str
+
+            action_taken_str = [action_str_map[action] for action in joint_action_taken]
+            self.joint_action_str_history["taken"][curr_step] = action_taken_str
 
         if self.logging_config["joint_state"]:
             self.joint_state_history[curr_step + 1] = next_joint_state
@@ -78,13 +97,8 @@ class EnvHistory:
         self.episode_no = episode_no
 
         self.eps_return = 0
-        self.joint_action_history = {}
-        self.joint_action_str_history = {}
-        self.joint_state_history = {}
-        self.reward_history = {}
-        self.info_history = {}
-        self.is_done_history = {}
-        self.frame_history = {}
+
+        self._init_dicts()
 
         self.joint_state_history[0] = start_joint_state
 
@@ -114,7 +128,6 @@ class EnvHistory:
 
         return out_dict
 
-    # TODO
     def save_video(self, base_path=None, video_name=None, fps=30):
         if not self.logging_config["frames"]:
             raise Exception("save_video cannot be called if frames aren't being logged "

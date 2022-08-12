@@ -443,6 +443,8 @@ class GridWorld(gym.Env):
         is_done = False
         info = ""
 
+        joint_action_taken = copy.copy(joint_action)
+
         # actions_map_s2e = self._actions_map_s2e
         if self._actions_type == "cardinal":
             curr_joint_pos = self._joint_pos
@@ -454,8 +456,13 @@ class GridWorld(gym.Env):
                 Action.EAST: [Action.NORTH, Action.SOUTH],
                 Action.WEST: [Action.NORTH, Action.SOUTH]
             }
-            for action, curr_pos in zip(joint_action, curr_joint_pos):
+
+            for i, (action, curr_pos) in enumerate(zip(joint_action_taken, curr_joint_pos)):
                 y, x = curr_pos
+                if curr_pos in self._goals:
+                    action = Action.WAIT
+                    joint_action_taken[i] = Action.WAIT
+
                 # cand_pos - candidate pos
                 # actions_map_s2e[action]
                 cand_pos = None
@@ -497,8 +504,8 @@ class GridWorld(gym.Env):
         else:
             raise NotImplementedError
 
-        joint_noop = [Action.WAIT for _ in range(n_agents)]
-        if joint_action == joint_noop:
+        joint_wait = [Action.WAIT for _ in range(n_agents)]
+        if joint_action_taken == joint_wait:
             next_joint_pos = self._joint_pos
 
             if tuple(next_joint_pos) in self._desirable_joint_goals:
@@ -529,9 +536,26 @@ class GridWorld(gym.Env):
             reward += n_collisions * self._rewards_config["collision"]
             # next_joint_pos = cand_joint_pos  # Temp
 
+        if not is_done:
+            if tuple(next_joint_pos) in self._desirable_joint_goals:
+                is_done = True
+                reward = self._rewards_config["desirable_goal"]
+                info += "[EPISODE TERMINATION] Episode terminated at desirable goal "
+            else:
+                # ANY joint goal - i.e. desirable or undesirable, i.e. any combination of goals
+                is_at_joint_goal = True
+                for pos in next_joint_pos:
+                    if pos not in self._goals:
+                        is_at_joint_goal = False
+                        break
+                if is_at_joint_goal:
+                    is_done = True
+                    reward = self._rewards_config["undesirable_goal"]
+                    info += "[EPISODE TERMINATION] Episode terminated at undesirable goal "
+
         self._joint_pos = next_joint_pos
 
-        return next_joint_pos, reward, is_done, info
+        return next_joint_pos, joint_action_taken, reward, is_done, info
 
     # GYM
     # noinspection PyMethodOverriding
@@ -554,7 +578,7 @@ class GridWorld(gym.Env):
             else:
                 raise ValueError("joint_start_state is of wrong type")
 
-        else:  #  joint_start_state is None
+        else:  # joint_start_state is None
             if not random_start:
                 joint_start_state = self._joint_start_state
             else:
@@ -585,8 +609,9 @@ class GridWorld(gym.Env):
         # If RGB -> return RGB array
         # If joint state -> return list of states
         if self._observations_type == "joint_state":
-            next_joint_pos, reward, is_done, info = self._take_joint_action(joint_action)
-            self.env_history.step(joint_action=joint_action, next_joint_state=next_joint_pos,
+            next_joint_pos, joint_action_taken, reward, is_done, info = self._take_joint_action(joint_action)
+            self.env_history.step(joint_action_given=joint_action, joint_action_taken=joint_action_taken,
+                                  next_joint_state=next_joint_pos,
                                   reward=reward, is_done=is_done, info=info)
             if self._flatten_state:
                 next_joint_pos = self.flatten_states(next_joint_pos)
