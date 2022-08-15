@@ -34,7 +34,9 @@ class GridWorld(gym.Env):
         "wait_at_goal": -0.001,
         "collision": -0.01,
         "desirable_goal": 10,
-        "undesirable_goal": -10
+        "undesirable_goal": -10,
+        "r_min": None,
+        "r_max": None
     }
     _DEFAULT_RENDERING_CONFIG = {
         "sprite_size": 40,
@@ -98,11 +100,25 @@ class GridWorld(gym.Env):
 
         self.episode_no = 0
 
-        # Rewards
+        # REWARDS #
         # GridWorld._validate_rewards_config(rewards_config)
         self._rewards_config = copy_to_dict(rewards_config, GridWorld._DEFAULT_REWARDS)
+        rewards = [self._rewards_config[key] for key in self._rewards_config.keys()
+                   if self._rewards_config[key] is not None]
 
-        # ACTIONS
+        if self._rewards_config["r_min"] is None:
+            self._rewards_config["r_min"] = min(rewards)
+
+        if self._rewards_config["r_max"] is None:
+            self._rewards_config["r_max"] = max(rewards)
+
+        assert self._rewards_config["r_max"] >= max(rewards), "r_max must be max value in rewards"
+        assert self._rewards_config["r_min"] <= min(rewards), "r_min must be min value in rewards"
+
+        self.r_min = self._rewards_config["r_min"]
+        self.r_max = self._rewards_config["r_max"]
+
+        # ACTIONS #
         self._slip_prob = slip_prob
         self._actions_type = actions_type
         self._valid_actions = [Action.WAIT]  # , Action.PICK_UP] For now WAIT acts as pickup
@@ -176,6 +192,7 @@ class GridWorld(gym.Env):
         # GYM SPACES
         # Action Space
         self.action_space = spaces.Tuple([spaces.Discrete(self._n_actions) for _ in range(self._n_agents)])
+        self.action_shape = tuple([self._n_actions for _ in range(self._n_agents)])
 
         # Observation Space
         if self._observations_type == "joint_state":
