@@ -450,8 +450,6 @@ class GridWorld(gym.Env):
     # HELPER
     # Redo to make static so I can use njit
     def _take_joint_action(self, joint_action: Union[List[int], List[Action]]):
-        # TODO: Fix bug where next_joint_pos contains None values if agents start from same location
-        #  and end at same location
         grid = self._grid
         rewards_config = self._rewards_config
         n_agents = self._n_agents
@@ -557,22 +555,22 @@ class GridWorld(gym.Env):
             reward += n_collisions * self._rewards_config["collision"]
             # next_joint_pos = cand_joint_pos  # Temp
 
-        if not is_done:
-            if tuple(next_joint_pos) in self._desirable_joint_goals:
-                is_done = True
-                reward = self._rewards_config["desirable_goal"]
-                info += "[EPISODE TERMINATION] Episode terminated at desirable goal "
-            else:
-                # ANY joint goal - i.e. desirable or undesirable, i.e. any combination of goals
-                is_at_joint_goal = True
-                for pos in next_joint_pos:
-                    if pos not in self._goals:
-                        is_at_joint_goal = False
-                        break
-                if is_at_joint_goal:
-                    is_done = True
-                    reward = self._rewards_config["undesirable_goal"]
-                    info += "[EPISODE TERMINATION] Episode terminated at undesirable goal "
+        # if not is_done:
+        #     if tuple(next_joint_pos) in self._desirable_joint_goals:
+        #         is_done = True
+        #         reward = self._rewards_config["desirable_goal"]
+        #         info += "[EPISODE TERMINATION] Episode terminated at desirable goal "
+        #     else:
+        #         # ANY joint goal - i.e. desirable or undesirable, i.e. any combination of goals
+        #         is_at_joint_goal = True
+        #         for pos in next_joint_pos:
+        #             if pos not in self._goals:
+        #                 is_at_joint_goal = False
+        #                 break
+        #         if is_at_joint_goal:
+        #             is_done = True
+        #             reward = self._rewards_config["undesirable_goal"]
+        #             info += "[EPISODE TERMINATION] Episode terminated at undesirable goal "
 
         self._joint_pos = next_joint_pos
 
