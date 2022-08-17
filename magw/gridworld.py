@@ -46,6 +46,8 @@ class GridWorld(gym.Env):
         "collisions_enabled": True,
         "collisions_at_goals": True,
         "slip_prob": 0,
+        "terminate_mode": "joint_wait",
+        "goal_absorbing": False  # If an agent cannot leave a goal after entering it
     }
 
     _ASSET_IMAGES = {
@@ -452,6 +454,7 @@ class GridWorld(gym.Env):
     def _take_joint_action(self, joint_action: Union[List[int], List[Action]]):
         grid = self._grid
         rewards_config = self._rewards_config
+        dynamics_config = self._dynamics_config
         n_agents = self._n_agents
 
         def in_bounds(pos: Tuple[int,int]):
@@ -478,9 +481,11 @@ class GridWorld(gym.Env):
 
             for i, (action, curr_pos) in enumerate(zip(joint_action_taken, curr_joint_pos)):
                 y, x = curr_pos
-                if curr_pos in self._goals:
-                    action = Action.WAIT
-                    joint_action_taken[i] = Action.WAIT
+
+                if dynamics_config["goal_absorbing"]:
+                    if curr_pos in self._goals:
+                        action = Action.WAIT
+                        joint_action_taken[i] = Action.WAIT
 
                 # cand_pos - candidate pos
                 # actions_map_s2e[action]
