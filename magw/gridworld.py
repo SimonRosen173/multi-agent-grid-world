@@ -322,36 +322,22 @@ class GridWorld(gym.Env):
     def close(self):
         pygame.display.quit()
 
-    # TODO: Add NJIT
-    # @staticmethod
-    # def _check_agent_collisions(prev_joint_pos, cand_next_joint_pos, info,
-    #                             goals: Set[Tuple[int, int]], collisions_at_goals: bool = False):
-    #     if collisions_at_goals:
-    #         goals = set()  # Empty collisions set because goals info is no longer useful
-    #
-    #     n_agents = len(cand_next_joint_pos)
-    #     reward = 0
-    #     next_joint_pos = []
-    #     collisions = [0 for _ in range(n_agents)]
-    #     # 1. End in same cell collision
-    #     # Collisions should be infrequent, so need fast check to see if any happened
-    #     # Check if collisions in cand_next_joint_pos
-    #     if len(cand_next_joint_pos) != len(set(cand_next_joint_pos)):  # O(n)
-    #         # Now check where the collisions happened
-    #         for i in range(len(cand_next_joint_pos)):
-    #             for j in range(i, len(cand_next_joint_pos)):
-    #                 if cand_next_joint_pos[i] == cand_next_joint_pos[j]:
-    #                     # Collisions
-    #                     if cand_next_joint_pos[i] not in goals:
-    #                         collisions[i] = 1
-    #                         collisions[j] = 1
-    #                         # Maybe something to do with reward?
-    #         pass
-    #
-    #     return next_joint_pos, reward, info
-
     @staticmethod
     def _check_agent_collisions(
+            prev_joint_pos: List[Tuple[int,int]],
+            cand_next_joint_pos: List[Tuple[int,int]],
+            goals: Set[Tuple[int, int]],
+            collisions_at_goals: bool = False,
+    ):
+        n_agents = len(prev_joint_pos)
+        if n_agents == 2:
+            return GridWorld._check_2agent_collisions(prev_joint_pos, cand_next_joint_pos)
+        else:
+            return GridWorld._check_many_agent_collisions(prev_joint_pos, cand_next_joint_pos,
+                                                     goals, collisions_at_goals)
+
+    @staticmethod
+    def _check_many_agent_collisions(
             prev_joint_pos: List[Tuple[int,int]],
             cand_next_joint_pos: List[Tuple[int,int]],
             goals: Set[Tuple[int, int]],
@@ -426,8 +412,6 @@ class GridWorld(gym.Env):
                     if len(dg.in_edges(new_edge[0])) > 1:
                         problem_nodes.append(new_edge[0])
 
-        # print("No of edges removed: ", n_removed_edges)
-        # print("Problem agents: ", list(problem_agents))
 
         # Compute next_joint_pos
         next_joint_pos = [None for _ in range(n_agents)]
@@ -449,8 +433,28 @@ class GridWorld(gym.Env):
 
         return next_joint_pos, n_collisions, info
 
+    @staticmethod
+    def _check_2agent_collisions(
+            prev_joint_pos: List[Tuple[int,int]],
+            cand_next_joint_pos: List[Tuple[int,int]]
+    ):
+        info = ""
+
+        pos11, pos12 = prev_joint_pos
+        pos21, pos22 = cand_next_joint_pos
+
+        is_collide = pos21 == pos22 or (pos11 == pos22 and pos12 == pos21)
+
+        if is_collide:
+            n_collisions = 2
+            next_joint_pos = prev_joint_pos
+        else:
+            n_collisions = 0
+            next_joint_pos = cand_next_joint_pos
+
+        return next_joint_pos, n_collisions, info
+
     # HELPER
-    # Redo to make static so I can use njit
     def _take_joint_action(self, joint_action: Union[List[int], List[Action]]):
         grid = self._grid
         rewards_config = self._rewards_config
