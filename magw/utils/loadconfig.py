@@ -10,7 +10,8 @@ def load_config(file_path=None, file_name=None):
     assert not (file_path is None and file_name is None), "Either file_path or file_name must be set"
 
     if file_path is None:
-        file_path = f"{MAPS_PATH}\\{file_name}"
+        file_path = os.path.join(MAPS_PATH, file_name)
+        # file_path = f"{MAPS_PATH}\\{file_name}"
 
     with open(file_path) as f:
         json_data = json.load(f)
