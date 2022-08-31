@@ -5,6 +5,7 @@ import copy
 
 import os
 import sys
+import itertools
 
 import numpy as np
 
@@ -72,7 +73,6 @@ class GridWorld(gym.Env):
                  joint_start_state: List[Tuple[int, int]],
                  grid_input_type: str = "arr",  # ["arr","str","file_path", "map_name"]
                  rewards_config: Dict[str, float] = {},
-                 slip_prob: float = 0.0,
                  actions_type="cardinal",  # ["cardinal","turn"]
                  observations_type="joint_state",  # ["joint_state","rgb"],
                  flatten_state=False,  # Flatten state when returned
@@ -121,7 +121,7 @@ class GridWorld(gym.Env):
         self.r_max = self._rewards_config["r_max"]
 
         # ACTIONS #
-        self._slip_prob = slip_prob
+        self._slip_prob = dynamics_config["slip_prob"]
         self._actions_type = actions_type
         self._valid_actions = [Action.WAIT]  # , Action.PICK_UP] For now WAIT acts as pickup
         if actions_type == "cardinal":
@@ -163,14 +163,25 @@ class GridWorld(gym.Env):
 
         # Goals
         self._goals: Set[Tuple[int, int]] = goals
+        self._joint_goals: Set[Tuple[Tuple[int, int], ...]] = set(tuple(itertools.permutations(goals, r=n_agents)))
+
         # self._joint_goals = set(itertools.product(*[list(goals) for _ in range(n_agents)]))
         self._desirable_joint_goals: Set[Tuple[Tuple[int, int], ...]] = desirable_joint_goals
+        self._undesirable_joint_goals: Set[Tuple[Tuple[int, int], ...]] = \
+            self._joint_goals.difference(self._desirable_joint_goals)
 
         self._desirable_goals: Set[Tuple[int, int]] = set()  # This is for rendering
         for joint_goal in self._desirable_joint_goals:
             for goal in joint_goal:
                 self._desirable_goals.add(goal)
         self._undesirable_goals = self._goals.difference(self._desirable_goals)
+
+        # joint goal rewards
+        self._joint_goal_rewards = {}
+        for joint_goal in self._desirable_joint_goals:
+            self._joint_goal_rewards[joint_goal] = self._rewards_config["desirable_goal"]
+        for joint_goal in self._undesirable_joint_goals:
+            self._joint_goal_rewards[joint_goal] = self._rewards_config["undesirable_goal"]
 
         # Dynamics
         # Indicates if a number in the grid can be collided with based off 'no >= _collision_threshold'
@@ -265,6 +276,16 @@ class GridWorld(gym.Env):
         config_dict["dynamics_config"] = self._dynamics_config
         config_dict["logging_config"] = self.env_history.logging_config
         return config_dict
+
+    def get_joint_goal_rewards(self, flatten=True):
+        if not flatten:
+            return self._joint_goal_rewards
+        else:
+            joint_goal_rewards = {}
+            for tup_joint_goal in self._joint_goal_rewards.keys():
+                joint_goal = tuple(self.flatten_states(list(tup_joint_goal)))
+                joint_goal_rewards[joint_goal] = self._joint_goal_rewards[tup_joint_goal]
+            return joint_goal_rewards
 
     @staticmethod
     def _validate_rewards_config(rewards_config):
