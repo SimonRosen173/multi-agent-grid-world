@@ -265,6 +265,15 @@ class GridWorld(gym.Env):
     def flatten_state(self):
         return self._flatten_state
 
+    @property
+    def rewards_config(self):
+        rewards_copy = copy.deepcopy(self._rewards_config)
+        return rewards_copy
+
+    @property
+    def grid(self):
+        return self._grid
+
     def get_config(self):
         config_dict = copy.deepcopy(self._init_args)
         # Config cannot contain sets since it needs to be JSON serializable
@@ -572,7 +581,7 @@ class GridWorld(gym.Env):
                     is_done = True
                     reward = self._rewards_config["undesirable_goal"]
                     info += "[EPISODE TERMINATION] Episode terminated at undesirable goal "
-        else:
+        elif self._dynamics_config["collisions_enabled"]:
             collisions_at_goals = self._dynamics_config["collisions_at_goals"]
             next_joint_pos, n_collisions, collision_info = \
                 self._check_agent_collisions(prev_joint_pos=self._joint_pos,
@@ -583,6 +592,8 @@ class GridWorld(gym.Env):
                 info += f"[COLLISION] {n_collisions} collisions occurred."
 
             reward += n_collisions * self._rewards_config["collision"]
+        else:
+            next_joint_pos = cand_joint_pos
             # next_joint_pos = cand_joint_pos  # Temp
 
         # if not is_done:
@@ -673,7 +684,7 @@ class GridWorld(gym.Env):
         else:
             raise NotImplementedError
 
-    def render(self, mode="human", close=False) -> Optional[Union[RenderFrame, List[RenderFrame]]]:
+    def render(self, mode="human", close=False, clock_tick=2) -> Optional[Union[RenderFrame, List[RenderFrame]]]:
         # Probably need to actually do something with 'mode'
         if not self._is_rendering_init:
             self._init_rendering()
@@ -688,7 +699,7 @@ class GridWorld(gym.Env):
             self.viewer = pygame.display.set_mode(self._rendering_config["window_size"], 0, self._bestdepth)
 
         if mode == "human":
-            self._clock.tick(2)
+            self._clock.tick(clock_tick)
 
         # agent_sprites =
         # agent_sprites[0].update_pos((3,3))
@@ -705,6 +716,37 @@ class GridWorld(gym.Env):
 
         return arr
 
+    def animate_path(self, path, clock_tick=2):
+        for joint_pos in path:
+            self._joint_pos = joint_pos
+            self.render(clock_tick=clock_tick)
+
+
+def test_1agent():
+    TL = (2, 2)  # y,x
+    BL = (10, 2)
+    TR = (2, 10)
+    BR = (10, 10)
+    goals = {TL, BL, TR, BR}
+    desirable_joint_goals = {(TL,), (TR,),}
+    joint_start_state = [(1, 1)]
+
+    dynamics_config = {"slip_prob": 0.0}
+    logging_config = {"frames": True}
+
+    env = GridWorld(1, "corridors", goals=goals, desirable_joint_goals=desirable_joint_goals,
+                    joint_start_state=joint_start_state, flatten_state=True,
+                    grid_input_type="map_name", is_rendering=True,
+                    dynamics_config=dynamics_config, logging_config=logging_config)
+
+    print(env.action_space)
+    print(env.observation_space)
+
+    config = env.get_config()
+    # print(env.get_config())
+
+    interactive(env)
+
 
 def test():
     TL = (2, 2)  # y,x
@@ -715,7 +757,7 @@ def test():
     desirable_joint_goals = {(TL, TR), (TR, TL), (TR, TR), (TL, TL)}
     joint_start_state = [(1, 1), (1, 3)]
 
-    dynamics_config = {"slip_prob": 0.0}
+    dynamics_config = {"slip_prob": 0.0, "collisions_enabled": False}
     logging_config = {"frames": True}
 
     env = GridWorld(2, "corridors", goals=goals, desirable_joint_goals=desirable_joint_goals,
@@ -831,8 +873,32 @@ def interactive(env: GridWorld, video_path: Optional[str] = None):
                     sys.exit()
 
 
-if __name__ == "__main__":
-    test()
+def test_animate_path():
+    arr = [[0, 1, 0],
+           [0, 0, 0],
+           [0, 1, 0]]
+    arr = np.asarray(arr)
+    start = [(0, 0), (0, 2)]
 
+    BL = (2, 0)
+    BR = (2, 2)
+    goals = {BR, BL}
+
+    dynamics_config = {"slip_prob": 0.0, "collisions_enabled": False}
+    desirable_joint_goals = {(BR, BL)}
+    logging_config = {"frames": True}
+
+    env = GridWorld(2, arr, goals=goals, desirable_joint_goals=desirable_joint_goals,
+                    joint_start_state=start, flatten_state=True,
+                    grid_input_type="map_name", is_rendering=True,
+                    dynamics_config=dynamics_config, logging_config=logging_config)
+
+    interactive(env)
+
+
+if __name__ == "__main__":
+    # test()
+    test_animate_path()
+    # test_1agent()
     # pygame.time.delay(2000)
 

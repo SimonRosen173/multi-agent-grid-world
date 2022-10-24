@@ -109,6 +109,10 @@ class EnvHistory:
 
         self.frame_history[step] = frame
 
+    @property
+    def joint_start_state(self):
+        return self.joint_state_history[0]
+
     def to_dict(self):
         out_dict = {
             "episode": self.episode_no
