@@ -279,6 +279,7 @@ class GridWorld(gym.Env):
         # Config cannot contain sets since it needs to be JSON serializable
         config_dict["desirable_joint_goals"] = list(config_dict["desirable_joint_goals"])
         config_dict["goals"] = list(config_dict["goals"])
+        config_dict["n_goals"] = len(list(config_dict["goals"]))
 
         config_dict["rewards_config"] = self._rewards_config
         config_dict["rendering_config"] = self._rendering_config
