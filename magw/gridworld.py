@@ -364,111 +364,119 @@ class GridWorld(gym.Env):
         if n_agents == 2:
             return GridWorld._check_2agent_collisions(prev_joint_pos, cand_next_joint_pos)
         else:
-            return GridWorld._check_many_agent_collisions(prev_joint_pos, cand_next_joint_pos,
-                                                     goals, collisions_at_goals)
+            return GridWorld._check_multi_agent_collisions(prev_joint_pos, cand_next_joint_pos)
+            # return GridWorld._check_many_agent_collisions(prev_joint_pos, cand_next_joint_pos,
+            #                                          goals, collisions_at_goals)
+
+    # @staticmethod
+    # def _check_many_agent_collisions_graph(
+    #         prev_joint_pos: List[Tuple[int,int]],
+    #         cand_next_joint_pos: List[Tuple[int,int]],
+    #         goals: Set[Tuple[int, int]],
+    #         collisions_at_goals: bool = False,
+    # ):
+    #     info = ""
+    #
+    #     n_agents = len(prev_joint_pos)
+    #     nodes_set = set(prev_joint_pos + cand_next_joint_pos)
+    #
+    #     dg = nx.DiGraph()
+    #     dg.add_nodes_from(nodes_set)
+    #     edges_list = list(zip(prev_joint_pos, cand_next_joint_pos))
+    #     dg.add_edges_from(edges_list)
+    #
+    #     # Set attributes
+    #     # node attributes
+    #     node_attributes = {node: {"is_goal": node in goals} for node in dg.nodes()}
+    #     nx.set_node_attributes(dg, node_attributes)
+    #
+    #     # edge attributes
+    #     edge_agent_id = [i for i in range(n_agents)]
+    #     edge_is_stationary = [(True if x[0] == x[1] else False) for x in edges_list]
+    #     edge_attributes = {edges_list[i]: {"agent_id": i, "is_stationary": edge_is_stationary[i]}
+    #                        for i in range(len(edges_list))}
+    #     nx.set_edge_attributes(dg, edge_attributes)
+    #
+    #     # Collisions
+    #     n_removed_edges = 0
+    #     problem_agents = set()
+    #
+    #     # Pass through collisions
+    #     edges = [edge for edge in dg.edges()]
+    #     edges_seen = {edge: False for edge in edges}
+    #     for edge in edges:
+    #         if not edges_seen[edge]:
+    #             rev_edge = (edge[1], edge[0])
+    #             if rev_edge in dg.edges():
+    #                 edges_seen[rev_edge] = True
+    #                 edge_attr = dg[edge[0]][edge[1]]
+    #                 rev_edge_attr = dg[rev_edge[0]][rev_edge[1]]
+    #                 problem_agents.add(edge_attr["agent_id"])
+    #                 problem_agents.add(rev_edge_attr["agent_id"])
+    #                 n_removed_edges += 2
+    #
+    #                 dg.remove_edge(*edge)
+    #                 dg.add_edge(edge[0], edge[0], **edge_attr)
+    #                 dg.remove_edge(*rev_edge)
+    #                 dg.add_edge(rev_edge[0], rev_edge[0], **rev_edge_attr)
+    #
+    #     # Same cell collisions
+    #     in_edges_nodes = [(node, list(dg.in_edges(node))) for node in dg.nodes()]
+    #     problem_nodes_edges = list(filter(lambda x: True if len(x[1]) > 1 else False, in_edges_nodes))
+    #     problem_nodes = [el[0] for el in problem_nodes_edges]
+    #
+    #     while len(problem_nodes) > 0:
+    #         problem_node = problem_nodes.pop(0)
+    #         # False if node is goal and collisions do not occur at goals
+    #         if not (problem_node in goals and not collisions_at_goals):
+    #             problem_node_edges = list(dg.in_edges(problem_node))
+    #             non_stationary_edges = list(filter(lambda x: False if x[0] == x[1] else True,
+    #                                                problem_node_edges))
+    #             for edge in non_stationary_edges:
+    #                 # print(edge)
+    #                 n_removed_edges += 1
+    #                 edge_attr = dg[edge[0]][edge[1]]
+    #                 problem_agents.add(edge_attr["agent_id"])
+    #
+    #                 new_edge = (edge[0], edge[0])  # Stationary edge
+    #                 dg.add_edge(*new_edge, **edge_attr)
+    #                 dg.remove_edge(*edge)
+    #                 if len(dg.in_edges(new_edge[0])) > 1:
+    #                     problem_nodes.append(new_edge[0])
+    #
+    #
+    #     # Compute next_joint_pos
+    #     next_joint_pos = [None for _ in range(n_agents)]
+    #     next_pos_agent = [(dg[edge[0]][edge[1]]["agent_id"], edge[1]) for edge in dg.edges()]
+    #
+    #     for agent_id, pos in next_pos_agent:
+    #         next_joint_pos[agent_id] = pos
+    #
+    #     # Counting collisions based off the cand_pos had to be changed
+    #     # If an agent waited and the other agent collided with it, I am counting that as one collision
+    #     # while it counts as two collisions if both agents tried to move into each other
+    #     n_collisions = 0
+    #     for i in range(n_agents):
+    #         if cand_next_joint_pos[i] != next_joint_pos[i]:
+    #             n_collisions += 1
+    #     # n_collisions = len(problem_agents)
+    #
+    #     # print("next_joint_pos:", next_joint_pos)
+    #
+    #     return next_joint_pos, n_collisions, info
 
     @staticmethod
-    def _check_many_agent_collisions(
-            prev_joint_pos: List[Tuple[int,int]],
-            cand_next_joint_pos: List[Tuple[int,int]],
-            goals: Set[Tuple[int, int]],
-            collisions_at_goals: bool = False,
-    ):
-        info = ""
+    def is_2collision(prev_joint_pos, next_joint_pos):
+        pos11, pos12 = prev_joint_pos
+        pos21, pos22 = next_joint_pos
 
-        n_agents = len(prev_joint_pos)
-        nodes_set = set(prev_joint_pos + cand_next_joint_pos)
-
-        dg = nx.DiGraph()
-        dg.add_nodes_from(nodes_set)
-        edges_list = list(zip(prev_joint_pos, cand_next_joint_pos))
-        dg.add_edges_from(edges_list)
-
-        # Set attributes
-        # node attributes
-        node_attributes = {node: {"is_goal": node in goals} for node in dg.nodes()}
-        nx.set_node_attributes(dg, node_attributes)
-
-        # edge attributes
-        edge_agent_id = [i for i in range(n_agents)]
-        edge_is_stationary = [(True if x[0] == x[1] else False) for x in edges_list]
-        edge_attributes = {edges_list[i]: {"agent_id": i, "is_stationary": edge_is_stationary[i]}
-                           for i in range(len(edges_list))}
-        nx.set_edge_attributes(dg, edge_attributes)
-
-        # Collisions
-        n_removed_edges = 0
-        problem_agents = set()
-
-        # Pass through collisions
-        edges = [edge for edge in dg.edges()]
-        edges_seen = {edge: False for edge in edges}
-        for edge in edges:
-            if not edges_seen[edge]:
-                rev_edge = (edge[1], edge[0])
-                if rev_edge in dg.edges():
-                    edges_seen[rev_edge] = True
-                    edge_attr = dg[edge[0]][edge[1]]
-                    rev_edge_attr = dg[rev_edge[0]][rev_edge[1]]
-                    problem_agents.add(edge_attr["agent_id"])
-                    problem_agents.add(rev_edge_attr["agent_id"])
-                    n_removed_edges += 2
-
-                    dg.remove_edge(*edge)
-                    dg.add_edge(edge[0], edge[0], **edge_attr)
-                    dg.remove_edge(*rev_edge)
-                    dg.add_edge(rev_edge[0], rev_edge[0], **rev_edge_attr)
-
-        # Same cell collisions
-        in_edges_nodes = [(node, list(dg.in_edges(node))) for node in dg.nodes()]
-        problem_nodes_edges = list(filter(lambda x: True if len(x[1]) > 1 else False, in_edges_nodes))
-        problem_nodes = [el[0] for el in problem_nodes_edges]
-
-        while len(problem_nodes) > 0:
-            problem_node = problem_nodes.pop(0)
-            # False if node is goal and collisions do not occur at goals
-            if not (problem_node in goals and not collisions_at_goals):
-                problem_node_edges = list(dg.in_edges(problem_node))
-                non_stationary_edges = list(filter(lambda x: False if x[0] == x[1] else True,
-                                                   problem_node_edges))
-                for edge in non_stationary_edges:
-                    # print(edge)
-                    n_removed_edges += 1
-                    edge_attr = dg[edge[0]][edge[1]]
-                    problem_agents.add(edge_attr["agent_id"])
-
-                    new_edge = (edge[0], edge[0])  # Stationary edge
-                    dg.add_edge(*new_edge, **edge_attr)
-                    dg.remove_edge(*edge)
-                    if len(dg.in_edges(new_edge[0])) > 1:
-                        problem_nodes.append(new_edge[0])
-
-
-        # Compute next_joint_pos
-        next_joint_pos = [None for _ in range(n_agents)]
-        next_pos_agent = [(dg[edge[0]][edge[1]]["agent_id"], edge[1]) for edge in dg.edges()]
-
-        for agent_id, pos in next_pos_agent:
-            next_joint_pos[agent_id] = pos
-
-        # Counting collisions based off the cand_pos had to be changed
-        # If an agent waited and the other agent collided with it, I am counting that as one collision
-        # while it counts as two collisions if both agents tried to move into each other
-        n_collisions = 0
-        for i in range(n_agents):
-            if cand_next_joint_pos[i] != next_joint_pos[i]:
-                n_collisions += 1
-        # n_collisions = len(problem_agents)
-
-        # print("next_joint_pos:", next_joint_pos)
-
-        return next_joint_pos, n_collisions, info
+        return pos21 == pos22 or (pos11 == pos22 and pos12 == pos21)
 
     @staticmethod
     def _check_2agent_collisions(
             prev_joint_pos: List[Tuple[int,int]],
             cand_next_joint_pos: List[Tuple[int,int]]
-    ):
+    ) -> Tuple[List[Tuple[int,int]], int, str]:
         info = ""
 
         pos11, pos12 = prev_joint_pos
@@ -484,6 +492,68 @@ class GridWorld(gym.Env):
             next_joint_pos = cand_next_joint_pos
 
         return next_joint_pos, n_collisions, info
+
+    @staticmethod
+    def _check_multi_agent_collisions(
+            prev_joint_pos: List[Tuple[int,int]],
+            cand_next_joint_pos: List[Tuple[int,int]]
+    ) -> Tuple[List[Tuple[int,int]], int, str]:
+        info = ""
+        all_nodes = set(prev_joint_pos).union(set(cand_next_joint_pos))
+        out_edges = {node:None for node in all_nodes}
+        in_edges = {node:set() for node in all_nodes}
+
+        n_agents = len(prev_joint_pos)
+        for i in range(n_agents):
+            out_edges[prev_joint_pos[i]] = cand_next_joint_pos[i]
+            if cand_next_joint_pos[i] in in_edges:
+                in_edges[cand_next_joint_pos[i]].add(prev_joint_pos[i])
+            else:
+                in_edges[cand_next_joint_pos[i]] = {prev_joint_pos[i]}
+
+        # pass through collisions
+        for node in out_edges:
+            if out_edges[node] in in_edges[node] and not out_edges[node] == node:
+                # Is pass through collision
+                other_node = out_edges[node]
+                out_edges[node] = node
+                out_edges[other_node] = other_node
+                in_edges[node].add(node)
+                in_edges[other_node].add(other_node)
+
+                in_edges[node].remove(other_node)
+                in_edges[other_node].remove(node)
+                # print(f"Pass through collision at {node} & {out_edges[node]}")
+                # pass
+
+        # problem_nodes = nodes with multiple in_nodes
+        problem_nodes = set()
+        for node in in_edges:
+            if len(in_edges[node]) > 1:
+                problem_nodes.add(node)
+
+        # i = 0
+        while len(problem_nodes) > 0:
+            curr_node = problem_nodes.pop()
+            tmp = copy.copy(in_edges[curr_node])
+            for in_node in tmp:
+                # i += 1
+                if out_edges[in_node] == in_node:
+                    pass
+                else:
+                    problem_nodes.add(in_node)
+                    in_edges[curr_node].remove(in_node)
+                    out_edges[in_node] = in_node
+                    in_edges[in_node].add(in_node)
+
+        n_collisions = 0
+        next_joint_pos = []
+        for i in range(n_agents):
+            next_joint_pos.append(out_edges[prev_joint_pos[i]])
+            if cand_next_joint_pos[i] != next_joint_pos[i]:
+                n_collisions += 1
+
+        return next_joint_pos, n_collisions, ""
 
     # HELPER
     def _take_joint_action(self, joint_action: Union[List[int], List[Action]]):
@@ -723,6 +793,34 @@ class GridWorld(gym.Env):
             self.render(clock_tick=clock_tick)
 
 
+def test_multi_agent():
+    arr = [[0, 0, 0, 0],
+           [0, 0, 0, 0],
+           [0, 0, 0, 0],
+           [0, 0, 0, 0]]
+    arr = np.asarray(arr)
+    n_agents = 3
+
+    start = [(1, 1), (1, 2), (2, 1)]
+
+    TL = (0, 0)
+    TR = (0, 3)
+    BL = (3, 0)
+    BR = (3, 3)
+    goals = {TL, TR, BR, BL}
+
+    dynamics_config = {"slip_prob": 0.0, "collisions_enabled": True}
+    desirable_joint_goals = {(TR, BR, BL)}
+    logging_config = {"frames": True}
+
+    env = GridWorld(n_agents, arr, goals=goals, desirable_joint_goals=desirable_joint_goals,
+                    joint_start_state=start, flatten_state=True,
+                    grid_input_type="map_name", is_rendering=True,
+                    dynamics_config=dynamics_config, logging_config=logging_config)
+
+    interactive(env)
+
+
 def test_1agent():
     TL = (2, 2)  # y,x
     BL = (10, 2)
@@ -897,9 +995,72 @@ def test_animate_path():
     interactive(env)
 
 
+def check_collision(prev_joint_pos, cand_next_joint_pos):
+    # next_joint_pos = copy.copy(cand_next_joint_pos)
+    all_nodes = set(prev_joint_pos).union(set(cand_next_joint_pos))
+    out_edges = {node:None for node in all_nodes}
+    in_edges = {node:set() for node in all_nodes}
+
+    n_agents = len(prev_joint_pos)
+    for i in range(n_agents):
+        out_edges[prev_joint_pos[i]] = cand_next_joint_pos[i]
+        if cand_next_joint_pos[i] in in_edges:
+            in_edges[cand_next_joint_pos[i]].add(prev_joint_pos[i])
+        else:
+            in_edges[cand_next_joint_pos[i]] = {prev_joint_pos[i]}
+
+    print(f"out_edges = {out_edges}")
+    print(f"in_edges = {in_edges}")
+
+    # problem_nodes = nodes with multiple in_nodes
+    problem_nodes = set()
+    for node in in_edges:
+        if len(in_edges[node]) > 1:
+            problem_nodes.add(node)
+
+    i = 0
+    while len(problem_nodes) > 0:
+        curr_node = problem_nodes.pop()
+        tmp = copy.copy(in_edges[curr_node])
+        for in_node in tmp:
+            i += 1
+            if out_edges[in_node] == in_node:
+                pass
+            else:
+                problem_nodes.add(in_node)
+                in_edges[curr_node].remove(in_node)
+                out_edges[in_node] = in_node
+                in_edges[in_node].add(in_node)
+
+    print()
+    print(f"i = {i}")
+    print(f"out_edges = {out_edges}")
+    print(f"in_edges = {in_edges}")
+
+    n_collisions = 0
+    next_joint_pos = [None for _ in range(n_agents)]
+    for i in range(n_agents):
+        next_joint_pos[i] = out_edges[prev_joint_pos[i]]
+        if cand_next_joint_pos[i] != next_joint_pos[i]:
+            n_collisions += 1
+
+    return next_joint_pos, n_collisions, ""
+
+
+def test_check_collisions():
+    prev1 = [(0,0), (1,0), (1,1)]
+    next1 = [(0,1), (0,0), (1,0)]
+
+    next_joint_pos, n_collisions, _ = check_collision(prev1, next1)
+    print(f"next_joint_pos = {next_joint_pos}")
+    print(f"n_collisions = {n_collisions}")
+
+
 if __name__ == "__main__":
     # test()
-    test_animate_path()
+    # test_animate_path()
+    # test_check_collisions()
+    test_multi_agent()
     # test_1agent()
     # pygame.time.delay(2000)
 

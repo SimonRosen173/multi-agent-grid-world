@@ -36,7 +36,7 @@ class GoalSprite(sprite.Sprite):
 
 class AgentSprite(sprite.Sprite):
     _IMAGE_BASE_NAME = "character"  # TODO
-    _COLORS = ["red", "blue"]
+    _COLORS = ["red", "blue", "green", "yellow"]
 
     def __init__(self, sprite_size: int, agent_no: int, start_pos: Tuple[int,int]):
         self.name = f"agent_{agent_no}"
