@@ -8,6 +8,8 @@ import sys
 import itertools
 
 import numpy as np
+from numba import njit, types
+import numba
 
 import networkx as nx
 
@@ -499,11 +501,14 @@ class GridWorld(gym.Env):
             cand_next_joint_pos: List[Tuple[int,int]]
     ) -> Tuple[List[Tuple[int,int]], int, str]:
         info = ""
+        n_agents = len(prev_joint_pos)
+
         all_nodes = set(prev_joint_pos).union(set(cand_next_joint_pos))
-        out_edges = {node:None for node in all_nodes}
+        # tup_type = types.UniTuple(types.int32, n_agents)
+        # out_edges =
+        out_edges = {node:(-1, -1) for node in all_nodes}
         in_edges = {node:set() for node in all_nodes}
 
-        n_agents = len(prev_joint_pos)
         for i in range(n_agents):
             out_edges[prev_joint_pos[i]] = cand_next_joint_pos[i]
             if cand_next_joint_pos[i] in in_edges:
@@ -552,6 +557,114 @@ class GridWorld(gym.Env):
             next_joint_pos.append(out_edges[prev_joint_pos[i]])
             if cand_next_joint_pos[i] != next_joint_pos[i]:
                 n_collisions += 1
+
+        return next_joint_pos, n_collisions, ""
+
+
+    @staticmethod
+    @njit
+    def _check_multi_agent_collisions_nb(
+            prev_joint_pos: List[Tuple[int,int]],
+            cand_next_joint_pos: List[Tuple[int,int]]
+    ) -> Tuple[List[Tuple[int,int]], int, str]:
+        info = ""
+        n_agents = len(prev_joint_pos)
+
+        all_nodes = set(prev_joint_pos).union(set(cand_next_joint_pos))
+        # tup_type = types.UniTuple(types.int32, n_agents)
+        # out_edges =
+        out_edges = numba.typed.Dict.empty(
+            key_type = types.int32,
+            value_type = types.int32
+        )
+
+        set_type = types.Set(types.int32, reflected=True)
+
+        in_edges = numba.typed.Dict.empty(
+            key_type = types.int32,
+            value_type = set_type
+        )
+
+        # in_edges = dict()
+
+        for node in all_nodes:
+            out_edges[node] = -1
+            in_edges[node] = set()
+
+        # out_edges = {node:-1 for node in all_nodes}
+        # in_edges = {node:set() for node in all_nodes}
+
+
+
+        for i in range(n_agents):
+            out_edges[prev_joint_pos[i]] = cand_next_joint_pos[i]
+            if cand_next_joint_pos[i] in in_edges:
+                in_edges[cand_next_joint_pos[i]].add(prev_joint_pos[i])
+            else:
+                in_edges[cand_next_joint_pos[i]] = {prev_joint_pos[i]}
+
+        # pass through collisions
+        for node in out_edges:
+            if out_edges[node] in in_edges[node] and not out_edges[node] == node:
+                # Is pass through collision
+                other_node = out_edges[node]
+                out_edges[node] = node
+                out_edges[other_node] = other_node
+                in_edges[node].add(node)
+                in_edges[other_node].add(other_node)
+
+                in_edges[node].remove(other_node)
+                in_edges[other_node].remove(node)
+                # print(f"Pass through collision at {node} & {out_edges[node]}")
+                # pass
+
+        # problem_nodes = nodes with multiple in_nodes
+        problem_nodes = set()
+        for node in in_edges:
+            if len(in_edges[node]) > 1:
+                problem_nodes.add(node)
+
+        # i = 0
+        while len(problem_nodes) > 0:
+            curr_node = problem_nodes.pop()
+            tmp = copy.copy(in_edges[curr_node])
+            for in_node in tmp:
+                # i += 1
+                if out_edges[in_node] == in_node:
+                    pass
+                else:
+                    problem_nodes.add(in_node)
+                    in_edges[curr_node].remove(in_node)
+                    out_edges[in_node] = in_node
+                    in_edges[in_node].add(in_node)
+
+        n_collisions = 0
+        next_joint_pos = []
+        for i in range(n_agents):
+            next_joint_pos.append(out_edges[prev_joint_pos[i]])
+            if cand_next_joint_pos[i] != next_joint_pos[i]:
+                n_collisions += 1
+
+        return next_joint_pos, n_collisions
+
+    @staticmethod
+    def _check_multi_agent_collisions_fast(
+            prev_joint_pos: List[Tuple[int,int]],
+            cand_next_joint_pos: List[Tuple[int,int]]
+    ) -> Tuple[List[Tuple[int,int]], int, str]:
+        n_agents = len(prev_joint_pos)
+        all_nodes = set(prev_joint_pos).union(set(cand_next_joint_pos))
+
+        nodes_map_t2i = {key: i for (i, key) in enumerate(all_nodes)}
+        nodes_map_i2t = {val: key for (key, val) in nodes_map_t2i.items()}
+
+        prev_joint_pos_int = [nodes_map_t2i[pos] for pos in prev_joint_pos]
+        cand_next_joint_pos_int = [nodes_map_t2i[pos] for pos in cand_next_joint_pos]
+
+        next_joint_pos_int, n_collisions = GridWorld._check_multi_agent_collisions_nb(prev_joint_pos_int,
+                                                                                      cand_next_joint_pos_int)
+
+        next_joint_pos = [nodes_map_i2t[pos] for pos in next_joint_pos_int]
 
         return next_joint_pos, n_collisions, ""
 
@@ -793,86 +906,6 @@ class GridWorld(gym.Env):
             self.render(clock_tick=clock_tick)
 
 
-def test_multi_agent():
-    arr = [[0, 0, 0, 0],
-           [0, 0, 0, 0],
-           [0, 0, 0, 0],
-           [0, 0, 0, 0]]
-    arr = np.asarray(arr)
-    n_agents = 3
-
-    start = [(1, 1), (1, 2), (2, 1)]
-
-    TL = (0, 0)
-    TR = (0, 3)
-    BL = (3, 0)
-    BR = (3, 3)
-    goals = {TL, TR, BR, BL}
-
-    dynamics_config = {"slip_prob": 0.0, "collisions_enabled": True}
-    desirable_joint_goals = {(TR, BR, BL)}
-    logging_config = {"frames": True}
-
-    env = GridWorld(n_agents, arr, goals=goals, desirable_joint_goals=desirable_joint_goals,
-                    joint_start_state=start, flatten_state=True,
-                    grid_input_type="map_name", is_rendering=True,
-                    dynamics_config=dynamics_config, logging_config=logging_config)
-
-    interactive(env)
-
-
-def test_1agent():
-    TL = (2, 2)  # y,x
-    BL = (10, 2)
-    TR = (2, 10)
-    BR = (10, 10)
-    goals = {TL, BL, TR, BR}
-    desirable_joint_goals = {(TL,), (TR,),}
-    joint_start_state = [(1, 1)]
-
-    dynamics_config = {"slip_prob": 0.0}
-    logging_config = {"frames": True}
-
-    env = GridWorld(1, "corridors", goals=goals, desirable_joint_goals=desirable_joint_goals,
-                    joint_start_state=joint_start_state, flatten_state=True,
-                    grid_input_type="map_name", is_rendering=True,
-                    dynamics_config=dynamics_config, logging_config=logging_config)
-
-    print(env.action_space)
-    print(env.observation_space)
-
-    config = env.get_config()
-    # print(env.get_config())
-
-    interactive(env)
-
-
-def test():
-    TL = (2, 2)  # y,x
-    BL = (10, 2)
-    TR = (2, 10)
-    BR = (10, 10)
-    goals = {TL, BL, TR, BR}
-    desirable_joint_goals = {(TL, TR), (TR, TL), (TR, TR), (TL, TL)}
-    joint_start_state = [(1, 1), (1, 3)]
-
-    dynamics_config = {"slip_prob": 0.0, "collisions_enabled": False}
-    logging_config = {"frames": True}
-
-    env = GridWorld(2, "corridors", goals=goals, desirable_joint_goals=desirable_joint_goals,
-                    joint_start_state=joint_start_state, flatten_state=True,
-                    grid_input_type="map_name", is_rendering=True,
-                    dynamics_config=dynamics_config, logging_config=logging_config)
-
-    print(env.action_space)
-    print(env.observation_space)
-
-    config = env.get_config()
-    # print(env.get_config())
-
-    interactive(env)
-
-
 def interactive(env: GridWorld, video_path: Optional[str] = None):
     env.render()
     key_action_map = {
@@ -970,6 +1003,91 @@ def interactive(env: GridWorld, video_path: Optional[str] = None):
                 elif event.key == pygame.K_ESCAPE:
                     pygame.quit()
                     sys.exit()
+
+
+def test_multi_agent():
+    arr = [[0, 0, 0, 0],
+           [0, 0, 0, 0],
+           [0, 0, 0, 0],
+           [0, 0, 0, 0]]
+    arr = np.asarray(arr)
+    n_agents = 3
+
+    start = [(1, 1), (1, 2), (2, 1)]
+
+    TL = (0, 0)
+    TR = (0, 3)
+    BL = (3, 0)
+    BR = (3, 3)
+    goals = {TL, TR, BR, BL}
+
+    dynamics_config = {"slip_prob": 0.0, "collisions_enabled": True}
+    desirable_joint_goals = {(TR, BR, BL)}
+    logging_config = {"frames": True}
+
+    env = GridWorld(n_agents, arr, goals=goals, desirable_joint_goals=desirable_joint_goals,
+                    joint_start_state=start, flatten_state=True,
+                    grid_input_type="map_name", is_rendering=True,
+                    dynamics_config=dynamics_config, logging_config=logging_config)
+
+    env.step([1,1,1])
+
+    interactive(env)
+
+
+def test_1agent():
+    TL = (2, 2)  # y,x
+    BL = (10, 2)
+    TR = (2, 10)
+    BR = (10, 10)
+    goals = {TL, BL, TR, BR}
+    desirable_joint_goals = {(TL,), (TR,),}
+    joint_start_state = [(1, 1)]
+
+    dynamics_config = {"slip_prob": 0.0}
+    logging_config = {"frames": True}
+
+    env = GridWorld(1, "corridors", goals=goals, desirable_joint_goals=desirable_joint_goals,
+                    joint_start_state=joint_start_state, flatten_state=True,
+                    grid_input_type="map_name", is_rendering=True,
+                    dynamics_config=dynamics_config, logging_config=logging_config)
+
+    print(env.action_space)
+    print(env.observation_space)
+
+    config = env.get_config()
+    # print(env.get_config())
+
+    interactive(env)
+
+
+def test():
+    TL = (2, 2)  # y,x
+    BL = (10, 2)
+    TR = (2, 10)
+    BR = (10, 10)
+    goals = {TL, BL, TR, BR}
+    desirable_joint_goals = {(TL, TR), (TR, TL), (TR, TR), (TL, TL)}
+    joint_start_state = [(1, 1), (1, 3)]
+
+    dynamics_config = {"slip_prob": 0.0, "collisions_enabled": False}
+    logging_config = {"frames": True}
+
+    env = GridWorld(2, "corridors", goals=goals, desirable_joint_goals=desirable_joint_goals,
+                    joint_start_state=joint_start_state, flatten_state=True,
+                    grid_input_type="map_name", is_rendering=True,
+                    dynamics_config=dynamics_config, logging_config=logging_config)
+
+    print(env.action_space)
+    print(env.observation_space)
+
+    config = env.get_config()
+    # print(env.get_config())
+
+    interactive(env)
+
+
+
 
 
 def test_animate_path():
