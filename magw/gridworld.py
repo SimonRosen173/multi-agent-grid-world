@@ -260,6 +260,10 @@ class GridWorld(gym.Env):
         self._render_group.add(self._agents_group.sprites())
 
     @property
+    def n_goals(self):
+        return len(self._goals)
+
+    @property
     def n_agents(self):
         return self._n_agents
 
